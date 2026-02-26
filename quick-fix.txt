@@ -1,0 +1,30 @@
+【iPhone 捷徑修復快速指南】
+
+🔴 問題：手機複製非HTTP文字時出現錯誤
+🟢 原因：iPhone捷徑缺少 X-Content-Type: text 標頭
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✅ 快速解決 3 步驟：
+
+1️⃣ 重新下載最新捷徑
+   📋 複製：https://www.icloud.com/shortcuts/f463a1e431c94c60b8a5c65305eb819f
+   📝 貼上：https://www.icloud.com/shortcuts/90e7a2af70df4707a17dece8c263afc5
+
+2️⃣ 檢查捷徑設定（編輯 "clipboard-online 貼上"）
+   🔸 X-API-Version: 1
+   🔸 X-Content-Type: text  ← 關鍵！
+   🔸 X-Client-Name: iPhone
+   🔸 URL: http://192.168.0.201:8086
+
+3️⃣ 測試
+   📱 複製任意文字 → 執行捷徑 → 檢查電腦剪貼簿
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🔧 如果仍有問題：
+• 在 iPhone Safari 測試：http://192.168.0.201:8086
+• 檢查 release/log.txt 是否顯示 HTTP 200
+• 嘗試其他 IP：192.168.0.181:8086
+
+💡 關鍵要點：確保 iPhone 捷徑的 HTTP 請求包含 "X-Content-Type: text" 標頭

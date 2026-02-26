@@ -6,6 +6,7 @@ import (
 	"crypto/md5"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"image/png"
 	"io/ioutil"
@@ -235,11 +236,44 @@ func setHandler(c *gin.Context) {
 	}
 
 	contentType := c.GetHeader("X-Content-Type")
+	
+	// 如果沒有明確指定內容類型，先嘗試判斷是否為文本內容
+	if contentType == "" {
+		// 讀取請求體進行判斷
+		body, err := ioutil.ReadAll(c.Request.Body)
+		if err != nil {
+			log.WithError(err).Warn("failed to read request body for content type detection")
+			c.Status(http.StatusBadRequest)
+			return
+		}
+		
+		// 重新設置請求體供後續使用
+		c.Request.Body = ioutil.NopCloser(bytes.NewBuffer(body))
+		
+		// 嘗試解析為JSON來判斷內容類型
+		var rawBody map[string]interface{}
+		if err := json.Unmarshal(body, &rawBody); err == nil {
+			if data, exists := rawBody["data"]; exists {
+				// 如果 data 是字符串且不包含 base64 編碼特徵，則認為是文本
+				if dataStr, isString := data.(string); isString {
+					// 簡單檢查：如果不像 base64 編碼（不包含典型的 base64 字符模式）
+					// 且長度合理，則認為是普通文本
+					if !strings.Contains(dataStr, "base64") && len(dataStr) < 1000000 {
+						contentType = utils.TypeText
+						log.WithField("dataLength", len(dataStr)).Debug("auto-detected content type as text")
+					}
+				}
+			}
+		}
+	}
+
 	if contentType == utils.TypeText {
 		setTextHandler(c)
 		return
 	}
 
+	// 對於其他類型或未明確指定的類型，嘗試文件處理
+	log.WithField("contentType", contentType).Debug("processing as file/media content")
 	setFileHandler(c)
 }
 
@@ -395,9 +429,18 @@ func cleanTempFiles() {
 		scanner := bufio.NewScanner(file)
 		for scanner.Scan() {
 			delPath := scanner.Text()
-			if err = os.Remove(delPath); err != nil {
-				log.WithError(err).WithField("delPath", delPath).Warn("failed to delete specify path")
+			// 檢查文件是否存在才嘗試刪除
+			if delPath != "" && utils.IsExistFile(delPath) {
+				if err = os.Remove(delPath); err != nil {
+					log.WithError(err).WithField("delPath", delPath).Warn("failed to delete specify path")
+				} else {
+					log.WithField("delPath", delPath).Debug("successfully deleted temp file")
+				}
 			}
+		}
+		// 清理 _filename.txt 自身
+		if err := os.Remove(path); err != nil {
+			log.WithError(err).WithField("path", path).Debug("failed to delete filename record file")
 		}
 	}
 }

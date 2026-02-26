@@ -3,6 +3,7 @@ module github.com/YanxinTang/clipboard-online
 go 1.15
 
 require (
+	github.com/akavel/rsrc v0.10.2 // indirect
 	github.com/gin-gonic/gin v1.7.4
 	github.com/lxn/walk v0.0.0-20210112085537-c389da54e794
 	github.com/lxn/win v0.0.0-20210218163916-a377121e959e
