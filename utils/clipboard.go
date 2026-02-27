@@ -1,9 +1,14 @@
 package utils
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"image"
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
 	"reflect"
 	"syscall"
 	"unsafe"
@@ -13,6 +18,8 @@ import (
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/sys/windows"
 )
+
+const cfDIB = 8
 
 const (
 	TypeText    = "text"
@@ -246,6 +253,69 @@ type DROPFILES struct {
 	fNC    bool
 	fWide  bool
 	_      uint32 // padding
+}
+
+// SetBitmapBytes decodes imgBytes (PNG/JPEG/GIF) and puts it on the clipboard as CF_DIB.
+func (c *ClipboardService) SetBitmapBytes(imgBytes []byte) error {
+	return c.withOpenClipboard(func() error {
+		win.EmptyClipboard()
+
+		img, _, err := image.Decode(bytes.NewReader(imgBytes))
+		if err != nil {
+			return fmt.Errorf("failed to decode image: %w", err)
+		}
+
+		bounds := img.Bounds()
+		w := bounds.Dx()
+		h := bounds.Dy()
+
+		const headerSize = 40
+		pixelSize := w * h * 4
+		dibData := make([]byte, headerSize+pixelSize)
+
+		// BITMAPINFOHEADER
+		binary.LittleEndian.PutUint32(dibData[0:], uint32(headerSize)) // biSize
+		binary.LittleEndian.PutUint32(dibData[4:], uint32(w))          // biWidth
+		binary.LittleEndian.PutUint32(dibData[8:], uint32(h))          // biHeight (positive = bottom-up)
+		binary.LittleEndian.PutUint16(dibData[12:], 1)                 // biPlanes
+		binary.LittleEndian.PutUint16(dibData[14:], 32)                // biBitCount
+		binary.LittleEndian.PutUint32(dibData[16:], 0)                 // biCompression = BI_RGB
+		binary.LittleEndian.PutUint32(dibData[20:], uint32(pixelSize)) // biSizeImage
+		// dibData[24:40] = 0 (other fields)
+
+		// Pixel data: bottom-up, BGRA
+		for y := 0; y < h; y++ {
+			for x := 0; x < w; x++ {
+				r, g, b, a := img.At(bounds.Min.X+x, bounds.Min.Y+y).RGBA()
+				idx := headerSize + ((h-1-y)*w+x)*4
+				dibData[idx+0] = byte(b >> 8) // Blue
+				dibData[idx+1] = byte(g >> 8) // Green
+				dibData[idx+2] = byte(r >> 8) // Red
+				dibData[idx+3] = byte(a >> 8) // Alpha
+			}
+		}
+
+		hMem := win.GlobalAlloc(win.GHND, uintptr(len(dibData)))
+		if hMem == 0 {
+			return lastError("GlobalAlloc for bitmap")
+		}
+
+		p := win.GlobalLock(hMem)
+		if p == nil {
+			win.GlobalFree(hMem)
+			return lastError("GlobalLock for bitmap")
+		}
+
+		win.MoveMemory(p, unsafe.Pointer(&dibData[0]), uintptr(len(dibData)))
+		win.GlobalUnlock(hMem)
+
+		if 0 == win.SetClipboardData(cfDIB, win.HANDLE(hMem)) {
+			defer win.GlobalFree(hMem)
+			return lastError("SetClipboardData for bitmap")
+		}
+
+		return nil
+	})
 }
 
 // SetFiles sets the current file drop data of the clipboard.

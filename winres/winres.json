@@ -1,6 +1,6 @@
 {
   "RT_GROUP_ICON": {
-    "APP": {
+    "#2": {
       "0000": [
         "icon.png",
         "icon16.png"
@@ -28,7 +28,7 @@
         "printer-driver-isolation": false,
         "gdi-scaling": false,
         "segment-heap": false,
-        "use-common-controls-v6": false
+        "use-common-controls-v6": true
       }
     }
   },

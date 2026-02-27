@@ -37,7 +37,7 @@ if ($debug) {
 }
 
 function build() {
-    & $ENV_GOAPTH/bin/rsrc.exe -manifest clipboard-online.manifest -ico app.ico -o rsrc.syso
+    & $ENV_GOAPTH/bin/go-winres.exe make
     if ( $mode -eq "debug") {
         build_debug
     }

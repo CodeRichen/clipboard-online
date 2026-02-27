@@ -236,7 +236,7 @@ func setHandler(c *gin.Context) {
 	}
 
 	contentType := c.GetHeader("X-Content-Type")
-	
+
 	// 如果沒有明確指定內容類型，先嘗試判斷是否為文本內容
 	if contentType == "" {
 		// 讀取請求體進行判斷
@@ -246,10 +246,10 @@ func setHandler(c *gin.Context) {
 			c.Status(http.StatusBadRequest)
 			return
 		}
-		
+
 		// 重新設置請求體供後續使用
 		c.Request.Body = ioutil.NopCloser(bytes.NewBuffer(body))
-		
+
 		// 嘗試解析為JSON來判斷內容類型
 		var rawBody map[string]interface{}
 		if err := json.Unmarshal(body, &rawBody); err == nil {
@@ -335,7 +335,13 @@ func setFileHandler(c *gin.Context) {
 		return
 	}
 
-	paths := make([]string, 0, len(body.Files))
+	type savedFile struct {
+		path  string
+		bytes []byte
+		name  string
+	}
+
+	saved := make([]savedFile, 0, len(body.Files))
 	for _, file := range body.Files {
 		if file.Name == "-" && file.Base64 == "-" {
 			continue
@@ -350,7 +356,12 @@ func setFileHandler(c *gin.Context) {
 			log.WithError(err).WithField("path", path).Warn("failed to create file")
 			continue
 		}
-		paths = append(paths, path)
+		saved = append(saved, savedFile{path: path, bytes: fileBytes, name: file.Name})
+	}
+
+	paths := make([]string, 0, len(saved))
+	for _, sf := range saved {
+		paths = append(paths, sf.path)
 	}
 
 	if app.config.ReserveHistory {
@@ -359,6 +370,43 @@ func setFileHandler(c *gin.Context) {
 	} else {
 		// write paths to file
 		setLastFilenames(paths)
+	}
+
+	// 智慧剪貼簿：單一文字檔 → SetText，單一 RTF → 解析後 SetText，單一圖片 → SetBitmap，其他 → SetFiles
+	if len(saved) == 1 {
+		ext := strings.ToLower(filepath.Ext(saved[0].name))
+		if ext == ".rtf" {
+			text := utils.ExtractTextFromRTF(saved[0].bytes)
+			if text != "" {
+				if err := utils.Clipboard().SetText(text); err != nil {
+					log.WithError(err).Warn("failed to set text clipboard from RTF, falling back to file")
+				} else {
+					log.WithField("path", saved[0].path).Info("set clipboard text from RTF file")
+					defer sendPasteNotification(log, c.GetString("clientName"), "[RTF文字] 已複製到剪貼板")
+					c.Status(http.StatusOK)
+					return
+				}
+			}
+		} else if isTextFileExt(ext) {
+			text := string(saved[0].bytes)
+			if err := utils.Clipboard().SetText(text); err != nil {
+				log.WithError(err).Warn("failed to set text clipboard from text file, falling back to file")
+			} else {
+				log.WithField("path", saved[0].path).Info("set clipboard text from text file")
+				defer sendPasteNotification(log, c.GetString("clientName"), "[文字] 已複製到剪貼板")
+				c.Status(http.StatusOK)
+				return
+			}
+		} else if isImageFileExt(ext) {
+			if err := utils.Clipboard().SetBitmapBytes(saved[0].bytes); err != nil {
+				log.WithError(err).Warn("failed to set bitmap clipboard from image file, falling back to file")
+			} else {
+				log.WithField("path", saved[0].path).Info("set clipboard bitmap from image file")
+				defer sendPasteNotification(log, c.GetString("clientName"), "[圖片] 已複製到剪貼板")
+				c.Status(http.StatusOK)
+				return
+			}
+		}
 	}
 
 	if err := utils.Clipboard().SetFiles(paths); err != nil {
@@ -377,6 +425,22 @@ func setFileHandler(c *gin.Context) {
 	defer sendPasteNotification(log, c.GetString("clientName"), notify)
 	log.WithField("paths", paths).Info("set clipboard file")
 	c.Status(http.StatusOK)
+}
+
+func isTextFileExt(ext string) bool {
+	switch ext {
+	case ".txt", ".md", ".csv", ".json", ".xml", ".html", ".htm", ".log", ".yaml", ".yml":
+		return true
+	}
+	return false
+}
+
+func isImageFileExt(ext string) bool {
+	switch ext {
+	case ".png", ".jpg", ".jpeg", ".gif", ".bmp":
+		return true
+	}
+	return false
 }
 
 func notFoundHandler(c *gin.Context) {
