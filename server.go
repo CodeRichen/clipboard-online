@@ -408,34 +408,15 @@ func setFileHandler(c *gin.Context) {
 				return
 			}
 		} else if isImageFileExt(ext) {
-			// 1. 複製一份到 Downloads 資料夾（不覆蓋同名）
-			downloadsPath := ""
+			// 複製一份到 Downloads 資料夾（不覆蓋同名）
 			downloadsDir := filepath.Join(os.Getenv("USERPROFILE"), "Downloads")
 			destInDownloads := utils.LatestFilename(filepath.Join(downloadsDir, saved[0].name))
 			if err := newFile(destInDownloads, saved[0].bytes); err != nil {
 				log.WithError(err).Warn("failed to copy image to Downloads")
 			} else {
-				downloadsPath = destInDownloads
-				log.WithField("path", downloadsPath).Info("copied image to Downloads")
+				log.WithField("path", destInDownloads).Info("copied image to Downloads")
 			}
-
-			// 2. 嘗試以像素資料寫入剪貼簿（CF_DIBV5）
-			if err := utils.Clipboard().SetBitmapBytes(saved[0].bytes); err != nil {
-				log.WithError(err).Warn("SetBitmapBytes failed, falling back to SetFiles")
-				// fallback：用 Downloads 裡的檔案路徑做 CF_HDROP
-				fallbackPaths := paths
-				if downloadsPath != "" {
-					fallbackPaths = []string{downloadsPath}
-				}
-				if err2 := utils.Clipboard().SetFiles(fallbackPaths); err2 != nil {
-					log.WithError(err2).Warn("SetFiles fallback also failed")
-				} else {
-					log.WithField("paths", fallbackPaths).Info("set clipboard file (image fallback)")
-				}
-			} else {
-				log.WithField("path", saved[0].path).Info("set clipboard bitmap from image file")
-			}
-			defer sendPasteNotification(log, c.GetString("clientName"), "[圖片] 已複製到剪貼板")
+			defer sendPasteNotification(log, c.GetString("clientName"), "[圖片] 已儲存至下載資料夾")
 			c.Status(http.StatusOK)
 			return
 		}

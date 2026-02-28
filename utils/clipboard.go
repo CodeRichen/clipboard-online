@@ -1,14 +1,9 @@
 package utils
 
 import (
-	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"image"
-	_ "image/gif"
-	_ "image/jpeg"
-	_ "image/png"
 	"reflect"
 	"syscall"
 	"unsafe"
@@ -251,79 +246,6 @@ type DROPFILES struct {
 	fNC    bool
 	fWide  bool
 	_      uint32 // padding
-}
-
-// SetBitmapBytes decodes imgBytes (PNG/JPEG/GIF) and puts it on the clipboard as CF_DIBV5 (32-bit BGRA).
-func (c *ClipboardService) SetBitmapBytes(imgBytes []byte) error {
-	return c.withOpenClipboard(func() error {
-		win.EmptyClipboard()
-
-		img, _, err := image.Decode(bytes.NewReader(imgBytes))
-		if err != nil {
-			return fmt.Errorf("failed to decode image: %w", err)
-		}
-
-		bounds := img.Bounds()
-		w := bounds.Dx()
-		h := bounds.Dy()
-
-		// BITMAPV5HEADER = 124 bytes, 32-bit BGRA, BI_BITFIELDS
-		const v5HeaderSize = 124
-		pixelSize := w * h * 4 // 32-bit per pixel, no padding needed
-		dibData := make([]byte, v5HeaderSize+pixelSize)
-
-		// BITMAPV5HEADER fields
-		binary.LittleEndian.PutUint32(dibData[0:], uint32(v5HeaderSize)) // bV5Size
-		binary.LittleEndian.PutUint32(dibData[4:], uint32(w))            // bV5Width
-		binary.LittleEndian.PutUint32(dibData[8:], uint32(h))            // bV5Height (positive = bottom-up)
-		binary.LittleEndian.PutUint16(dibData[12:], 1)                   // bV5Planes
-		binary.LittleEndian.PutUint16(dibData[14:], 32)                  // bV5BitCount
-		binary.LittleEndian.PutUint32(dibData[16:], 3)                   // bV5Compression = BI_BITFIELDS
-		binary.LittleEndian.PutUint32(dibData[20:], uint32(pixelSize))   // bV5SizeImage
-		// biXPelsPerMeter, biYPelsPerMeter, biClrUsed, biClrImportant = 0 (offset 24-39)
-		binary.LittleEndian.PutUint32(dibData[40:], 0x00FF0000) // bV5RedMask
-		binary.LittleEndian.PutUint32(dibData[44:], 0x0000FF00) // bV5GreenMask
-		binary.LittleEndian.PutUint32(dibData[48:], 0x000000FF) // bV5BlueMask
-		binary.LittleEndian.PutUint32(dibData[52:], 0xFF000000) // bV5AlphaMask
-		binary.LittleEndian.PutUint32(dibData[56:], 0x206E6957) // bV5CSType = LCS_WINDOWS_COLOR_SPACE
-		// bV5Endpoints (36 bytes, offset 60), bV5GammaRed/Green/Blue (12 bytes, offset 96) = 0
-		binary.LittleEndian.PutUint32(dibData[108:], 2) // bV5Intent = LCS_GM_GRAPHICS
-		// bV5ProfileData, bV5ProfileSize, bV5Reserved = 0
-
-		// Pixel data: bottom-up rows, 32-bit BGRA
-		for y := 0; y < h; y++ {
-			rowStart := v5HeaderSize + (h-1-y)*w*4
-			for x := 0; x < w; x++ {
-				r, g, b, a := img.At(bounds.Min.X+x, bounds.Min.Y+y).RGBA()
-				idx := rowStart + x*4
-				dibData[idx+0] = byte(b >> 8) // Blue
-				dibData[idx+1] = byte(g >> 8) // Green
-				dibData[idx+2] = byte(r >> 8) // Red
-				dibData[idx+3] = byte(a >> 8) // Alpha
-			}
-		}
-
-		hMem := win.GlobalAlloc(win.GHND, uintptr(len(dibData)))
-		if hMem == 0 {
-			return lastError("GlobalAlloc for bitmap")
-		}
-
-		p := win.GlobalLock(hMem)
-		if p == nil {
-			win.GlobalFree(hMem)
-			return lastError("GlobalLock for bitmap")
-		}
-
-		win.MoveMemory(p, unsafe.Pointer(&dibData[0]), uintptr(len(dibData)))
-		win.GlobalUnlock(hMem)
-
-		if 0 == win.SetClipboardData(win.CF_DIBV5, win.HANDLE(hMem)) {
-			defer win.GlobalFree(hMem)
-			return lastError("SetClipboardData CF_DIBV5 for bitmap")
-		}
-
-		return nil
-	})
 }
 
 // SetFiles sets the current file drop data of the clipboard.
