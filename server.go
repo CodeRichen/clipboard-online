@@ -381,7 +381,17 @@ func setFileHandler(c *gin.Context) {
 				if err := utils.Clipboard().SetText(text); err != nil {
 					log.WithError(err).Warn("failed to set text clipboard from RTF, falling back to file")
 				} else {
-					log.WithField("path", saved[0].path).Info("set clipboard text from RTF file")
+					// 將 temp 裡的 .rtf 替換成 .txt（純文字）
+					rtfPath := saved[0].path
+					txtPath := strings.TrimSuffix(rtfPath, filepath.Ext(rtfPath)) + ".txt"
+					txtPath = utils.LatestFilename(txtPath)
+					if err := newFile(txtPath, []byte(text)); err != nil {
+						log.WithError(err).Warn("failed to save extracted txt")
+					} else {
+						// 刪除原 RTF 暫存檔
+						_ = os.Remove(rtfPath)
+						log.WithFields(logrus.Fields{"txt": txtPath, "rtf": rtfPath}).Info("replaced RTF with TXT in temp")
+					}
 					defer sendPasteNotification(log, c.GetString("clientName"), "[RTF文字] 已複製到剪貼板")
 					c.Status(http.StatusOK)
 					return
@@ -398,14 +408,36 @@ func setFileHandler(c *gin.Context) {
 				return
 			}
 		} else if isImageFileExt(ext) {
+			// 1. 複製一份到 Downloads 資料夾（不覆蓋同名）
+			downloadsPath := ""
+			downloadsDir := filepath.Join(os.Getenv("USERPROFILE"), "Downloads")
+			destInDownloads := utils.LatestFilename(filepath.Join(downloadsDir, saved[0].name))
+			if err := newFile(destInDownloads, saved[0].bytes); err != nil {
+				log.WithError(err).Warn("failed to copy image to Downloads")
+			} else {
+				downloadsPath = destInDownloads
+				log.WithField("path", downloadsPath).Info("copied image to Downloads")
+			}
+
+			// 2. 嘗試以像素資料寫入剪貼簿（CF_DIBV5）
 			if err := utils.Clipboard().SetBitmapBytes(saved[0].bytes); err != nil {
-				log.WithError(err).Warn("failed to set bitmap clipboard from image file, falling back to file")
+				log.WithError(err).Warn("SetBitmapBytes failed, falling back to SetFiles")
+				// fallback：用 Downloads 裡的檔案路徑做 CF_HDROP
+				fallbackPaths := paths
+				if downloadsPath != "" {
+					fallbackPaths = []string{downloadsPath}
+				}
+				if err2 := utils.Clipboard().SetFiles(fallbackPaths); err2 != nil {
+					log.WithError(err2).Warn("SetFiles fallback also failed")
+				} else {
+					log.WithField("paths", fallbackPaths).Info("set clipboard file (image fallback)")
+				}
 			} else {
 				log.WithField("path", saved[0].path).Info("set clipboard bitmap from image file")
-				defer sendPasteNotification(log, c.GetString("clientName"), "[圖片] 已複製到剪貼板")
-				c.Status(http.StatusOK)
-				return
 			}
+			defer sendPasteNotification(log, c.GetString("clientName"), "[圖片] 已複製到剪貼板")
+			c.Status(http.StatusOK)
+			return
 		}
 	}
 
